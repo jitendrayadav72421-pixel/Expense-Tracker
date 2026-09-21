@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A beginner-friendly expense tracker using HTML, CSS, JavaScript, and localStorage."
+    />
+    <title>Expense Tracker | Manage your spending</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Expense Tracker home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H19v4h-3.5a3.5 3.5 0 1 0 0 7H19v5H6.5A2.5 2.5 0 0 1 4 17.5z" />
+              <path d="M15.5 8H20v7h-4.5a3.5 3.5 0 1 1 0-7Z" />
+              <circle cx="16.5" cy="11.5" r="1" />
+            </svg>
+          </span>
+          <span>
+            <strong>Expense Tracker</strong>
+            <small>Student finance companion</small>
+          </span>
+        </a>
+        <div class="topbar-note">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Saved locally in your browser</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="intro-section" aria-labelledby="page-title">
+          <div>
+            <p class="eyebrow">PERSONAL FINANCE · INR</p>
+            <h1 id="page-title">Make every rupee count.</h1>
+            <p class="intro-copy">
+              Keep your daily spending organised, spot patterns, and stay in
+              control of your budget.
+            </p>
+          </div>
+          <div class="date-chip">
+            <span class="date-chip-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <rect x="3.5" y="5" width="17" height="16" rx="2" />
+                <path d="M7.5 3.5v3M16.5 3.5v3M3.5 9.5h17" />
+              </svg>
+            </span>
+            <span>
+              <small>Today</small>
+              <strong id="today-date">--</strong>
+            </span>
+          </div>
+        </section>
+
+        <section class="summary-grid" aria-label="Expense summary">
+          <article class="summary-card summary-card-total">
+            <div class="summary-card-heading">
+              <span>Total expenses</span>
+              <span class="summary-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M5 19V9M12 19V5M19 19v-7" />
+                </svg>
+              </span>
+            </div>
+            <strong class="summary-value" id="total-expenses">₹0</strong>
+            <span class="summary-detail">Across all recorded expenses</span>
+          </article>
+
+          <article class="summary-card summary-card-count">
+            <div class="summary-card-heading">
+              <span>Number of expenses</span>
+              <span class="summary-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M7 4.5h10M7 9.5h10M7 14.5h6M5 3h14a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
+                </svg>
+              </span>
+            </div>
+            <strong class="summary-value" id="expense-count">0</strong>
+            <span class="summary-detail">Items saved in your tracker</span>
+          </article>
+
+          <article class="summary-card summary-card-highest">
+            <div class="summary-card-heading">
+              <span>Highest expense</span>
+              <span class="summary-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="m5 16 5-5 3 3 6-7M14 7h5v5" />
+                </svg>
+              </span>
+            </div>
+            <strong class="summary-value" id="highest-expense">₹0</strong>
+            <span class="summary-detail" id="highest-expense-detail">No expense yet</span>
+          </article>
+        </section>
+
+        <div class="content-grid">
+          <section class="panel add-expense-panel" aria-labelledby="add-expense-title">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">NEW ENTRY</p>
+                <h2 id="add-expense-title">Add expense</h2>
+              </div>
+              <span class="panel-heading-mark" aria-hidden="true">+</span>
+            </div>
+
+            <form id="expense-form" novalidate>
+              <div class="form-field">
+                <label for="expense-title">Expense title</label>
+                <input
+                  id="expense-title"
+                  name="title"
+                  type="text"
+                  maxlength="80"
+                  placeholder="e.g. College canteen"
+                  autocomplete="off"
+                />
+                <small class="field-error" id="title-error"></small>
+              </div>
+
+              <div class="form-row">
+                <div class="form-field">
+                  <label for="expense-amount">Amount <span>(₹)</span></label>
+                  <div class="input-with-prefix">
+                    <span aria-hidden="true">₹</span>
+                    <input
+                      id="expense-amount"
+                      name="amount"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      placeholder="0.00"
+                      inputmode="decimal"
+                    />
+                  </div>
+                  <small class="field-error" id="amount-error"></small>
+                </div>
+
+                <div class="form-field">
+                  <label for="expense-date">Date</label>
+                  <input id="expense-date" name="date" type="date" />
+                  <small class="field-error" id="date-error"></small>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="expense-category">Category</label>
+                <select id="expense-category" name="category">
+                  <option value="">Select a category</option>
+                  <option value="Food">Food</option>
+                  <option value="Travel">Travel</option>
+                  <option value="Shopping">Shopping</option>
+                  <option value="Bills">Bills</option>
+                  <option value="Entertainment">Entertainment</option>
+                  <option value="Education">Education</option>
+                  <option value="Healthcare">Healthcare</option>
+                  <option value="Other">Other</option>
+                </select>
+                <small class="field-error" id="category-error"></small>
+              </div>
+
+              <button class="primary-button" type="submit">
+                <span aria-hidden="true">+</span>
+                Add expense
+              </button>
+              <p class="form-note">
+                Your expenses are saved automatically on this device.
+              </p>
+            </form>
+          </section>
+
+          <section class="panel category-panel" aria-labelledby="category-title">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">WHERE IT GOES</p>
+                <h2 id="category-title">Category spending</h2>
+              </div>
+              <span class="muted-label">This month</span>
+            </div>
+            <div class="category-list" id="category-list">
+              <!-- Category totals are added here by JavaScript. -->
+            </div>
+          </section>
+        </div>
+
+        <section class="panel expenses-panel" aria-labelledby="expenses-title">
+          <div class="expenses-heading">
+            <div>
+              <p class="section-kicker">ACTIVITY</p>
+              <h2 id="expenses-title">All expenses</h2>
+            </div>
+            <span class="result-count" id="result-count">0 expenses</span>
+          </div>
+
+          <div class="toolbar" aria-label="Expense list controls">
+            <label class="search-box" for="search-input">
+              <span aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="10.8" cy="10.8" r="6.3" />
+                  <path d="m16 16 4.5 4.5" />
+                </svg>
+              </span>
+              <input
+                id="search-input"
+                type="search"
+                placeholder="Search by title..."
+                autocomplete="off"
+              />
+            </label>
+
+            <div class="toolbar-selects">
+              <label class="select-control">
+                <span>Category</span>
+                <select id="filter-category">
+                  <option value="all">All categories</option>
+                  <option value="Food">Food</option>
+                  <option value="Travel">Travel</option>
+                  <option value="Shopping">Shopping</option>
+                  <option value="Bills">Bills</option>
+                  <option value="Entertainment">Entertainment</option>
+                  <option value="Education">Education</option>
+                  <option value="Healthcare">Healthcare</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+              <label class="select-control">
+                <span>Sort by</span>
+                <select id="sort-expenses">
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                  <option value="highest">Highest amount</option>
+                  <option value="lowest">Lowest amount</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table>
+              <caption class="sr-only">Your recorded expenses</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Expense</th>
+                  <th scope="col">Category</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Date</th>
+                  <th scope="col"><span class="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody id="expense-table-body">
+                <!-- Expenses are added here by JavaScript. -->
+              </tbody>
+            </table>
+          </div>
+
+          <div class="empty-state" id="empty-state" hidden>
+            <div class="empty-state-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M6 3.5h9l3 3V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z" />
+                <path d="M14 3.5V7h4M8.5 11h7M8.5 14.5h7M8.5 18h4" />
+              </svg>
+            </div>
+            <h3 id="empty-state-title">No expenses yet</h3>
+            <p id="empty-state-copy">
+              Add your first expense to start understanding your spending.
+            </p>
+            <button class="text-button" id="clear-filters" type="button" hidden>
+              Clear filters
+            </button>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span>Expense Tracker</span>
+        <span>Built with HTML, CSS &amp; JavaScript</span>
+      </footer>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
