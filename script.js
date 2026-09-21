@@ -1,9 +1,17 @@
 /*
  * Expense Tracker
- * Data, validation, localStorage and rendering logic.
+ * Multi-user version:
+ * Netlify Identity + Netlify Function + Netlify Blobs
  */
 
-const STORAGE_KEY = "expense-tracker-expenses";
+import {
+  getUser,
+  login,
+  signup,
+  logout,
+  onAuthChange,
+  handleAuthCallback,
+} from "https://esm.sh/@netlify/identity@2.0.0";
 
 const CATEGORIES = [
   "Food",
@@ -16,52 +24,12 @@ const CATEGORIES = [
   "Other",
 ];
 
-// Demo expenses shown on first visit
-const DEMO_EXPENSES = [
-  {
-    id: "demo-canteen",
-    title: "College Canteen",
-    amount: 120,
-    category: "Food",
-    date: "2026-09-18",
-  },
-  {
-    id: "demo-metro",
-    title: "Metro/Bus",
-    amount: 80,
-    category: "Travel",
-    date: "2026-09-17",
-  },
-  {
-    id: "demo-stationery",
-    title: "Stationery",
-    amount: 350,
-    category: "Education",
-    date: "2026-09-15",
-  },
-  {
-    id: "demo-recharge",
-    title: "Mobile Recharge",
-    amount: 299,
-    category: "Bills",
-    date: "2026-09-12",
-  },
-  {
-    id: "demo-groceries",
-    title: "Groceries",
-    amount: 1500,
-    category: "Food",
-    date: "2026-09-10",
-  },
-];
-
-let expenses = loadExpenses();
+let expenses = [];
 let toastTimeout;
+let currentUser = null;
 
-// Get HTML elements
 const elements = {
   form: document.querySelector("#expense-form"),
-
   titleInput: document.querySelector("#expense-title"),
   amountInput: document.querySelector("#expense-amount"),
   categoryInput: document.querySelector("#expense-category"),
@@ -88,18 +56,17 @@ const elements = {
   emptyState: document.querySelector("#empty-state"),
   emptyStateTitle: document.querySelector("#empty-state-title"),
   emptyStateCopy: document.querySelector("#empty-state-copy"),
+
   clearFilters: document.querySelector("#clear-filters"),
-
   resultCount: document.querySelector("#result-count"),
-  todayDate: document.querySelector("#today-date"),
 
+  todayDate: document.querySelector("#today-date"),
   toast: document.querySelector("#toast"),
 };
 
-
-// --------------------------------------------------
-// Format amount as Indian Rupees
-// --------------------------------------------------
+/* =========================================================
+   BASIC HELPERS
+========================================================= */
 
 function formatIndianRupees(value) {
   return new Intl.NumberFormat("en-IN", {
@@ -109,11 +76,6 @@ function formatIndianRupees(value) {
     maximumFractionDigits: 2,
   }).format(Number(value) || 0);
 }
-
-
-// --------------------------------------------------
-// Get today's date in YYYY-MM-DD format
-// --------------------------------------------------
 
 function getTodayString() {
   const today = new Date();
@@ -125,15 +87,8 @@ function getTodayString() {
   return `${year}-${month}-${day}`;
 }
 
-
-// --------------------------------------------------
-// Format date for display
-// --------------------------------------------------
-
 function formatDate(dateString) {
-  if (!dateString) {
-    return "—";
-  }
+  if (!dateString) return "—";
 
   const date = new Date(`${dateString}T00:00:00`);
 
@@ -148,95 +103,540 @@ function formatDate(dateString) {
   }).format(date);
 }
 
+function makeId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
-// --------------------------------------------------
-// Load expenses from localStorage
-// --------------------------------------------------
+function getCategorySlug(category) {
+  return category.toLowerCase().replace(/\s+/g, "-");
+}
 
-function loadExpenses() {
+/* =========================================================
+   AUTH UI
+========================================================= */
+
+function createAuthUI() {
+  const header = document.querySelector(".topbar");
+  const main = document.querySelector("main");
+
+  if (!header || !main) return;
+
+  const authBar = document.createElement("div");
+
+  authBar.id = "auth-bar";
+
+  authBar.style.cssText = `
+    display:flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:10px;
+    padding:12px 20px;
+    border-bottom:1px solid #e5e7eb;
+    background:#ffffff;
+    flex-wrap:wrap;
+  `;
+
+  authBar.innerHTML = `
+    <span id="user-info"
+      style="font-size:14px;color:#4b5563;"></span>
+
+    <button id="login-btn"
+      type="button"
+      style="
+        border:0;
+        padding:9px 15px;
+        border-radius:8px;
+        cursor:pointer;
+        background:#2563eb;
+        color:white;
+        font-weight:600;
+      ">
+      Login
+    </button>
+
+    <button id="signup-btn"
+      type="button"
+      style="
+        border:1px solid #2563eb;
+        padding:8px 15px;
+        border-radius:8px;
+        cursor:pointer;
+        background:white;
+        color:#2563eb;
+        font-weight:600;
+      ">
+      Create Account
+    </button>
+
+    <button id="logout-btn"
+      type="button"
+      hidden
+      style="
+        border:0;
+        padding:9px 15px;
+        border-radius:8px;
+        cursor:pointer;
+        background:#dc2626;
+        color:white;
+        font-weight:600;
+      ">
+      Logout
+    </button>
+  `;
+
+  header.insertAdjacentElement("afterend", authBar);
+
+  main.hidden = true;
+
+  document
+    .querySelector("#login-btn")
+    .addEventListener("click", () => openAuthModal("login"));
+
+  document
+    .querySelector("#signup-btn")
+    .addEventListener("click", () => openAuthModal("signup"));
+
+  document
+    .querySelector("#logout-btn")
+    .addEventListener("click", handleLogout);
+}
+
+/* =========================================================
+   AUTH MODAL
+========================================================= */
+
+function openAuthModal(mode) {
+  const oldModal = document.querySelector("#auth-modal");
+
+  if (oldModal) {
+    oldModal.remove();
+  }
+
+  const isSignup = mode === "signup";
+
+  const modal = document.createElement("div");
+
+  modal.id = "auth-modal";
+
+  modal.style.cssText = `
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.55);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:9999;
+    padding:20px;
+  `;
+
+  modal.innerHTML = `
+    <div
+      style="
+        width:min(420px,100%);
+        background:white;
+        border-radius:16px;
+        padding:28px;
+        box-shadow:0 20px 60px rgba(0,0,0,.25);
+      "
+    >
+
+      <div style="
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-bottom:20px;
+      ">
+        <h2 style="margin:0;">
+          ${isSignup ? "Create Account" : "Login"}
+        </h2>
+
+        <button
+          id="close-auth"
+          type="button"
+          style="
+            border:0;
+            background:none;
+            font-size:24px;
+            cursor:pointer;
+          "
+        >
+          ×
+        </button>
+      </div>
+
+      ${
+        isSignup
+          ? `
+            <label style="display:block;margin-bottom:6px;">
+              Name
+            </label>
+
+            <input
+              id="auth-name"
+              type="text"
+              placeholder="Your name"
+              required
+              style="
+                width:100%;
+                box-sizing:border-box;
+                padding:12px;
+                margin-bottom:15px;
+                border:1px solid #d1d5db;
+                border-radius:8px;
+              "
+            />
+          `
+          : ""
+      }
+
+      <label style="display:block;margin-bottom:6px;">
+        Email
+      </label>
+
+      <input
+        id="auth-email"
+        type="email"
+        placeholder="you@example.com"
+        required
+        style="
+          width:100%;
+          box-sizing:border-box;
+          padding:12px;
+          margin-bottom:15px;
+          border:1px solid #d1d5db;
+          border-radius:8px;
+        "
+      />
+
+      <label style="display:block;margin-bottom:6px;">
+        Password
+      </label>
+
+      <input
+        id="auth-password"
+        type="password"
+        placeholder="Password"
+        required
+        minlength="6"
+        style="
+          width:100%;
+          box-sizing:border-box;
+          padding:12px;
+          margin-bottom:15px;
+          border:1px solid #d1d5db;
+          border-radius:8px;
+        "
+      />
+
+      <p
+        id="auth-error"
+        style="
+          color:#dc2626;
+          font-size:14px;
+          min-height:20px;
+        "
+      ></p>
+
+      <button
+        id="auth-submit"
+        type="button"
+        style="
+          width:100%;
+          border:0;
+          padding:12px;
+          border-radius:8px;
+          background:#2563eb;
+          color:white;
+          font-weight:700;
+          cursor:pointer;
+        "
+      >
+        ${isSignup ? "Create Account" : "Login"}
+      </button>
+
+      <p style="
+        text-align:center;
+        margin-top:18px;
+        font-size:14px;
+        color:#6b7280;
+      ">
+        ${
+          isSignup
+            ? `Already have an account?
+               <button id="switch-auth"
+                 type="button"
+                 style="border:0;background:none;color:#2563eb;cursor:pointer;">
+                 Login
+               </button>`
+            : `Don't have an account?
+               <button id="switch-auth"
+                 type="button"
+                 style="border:0;background:none;color:#2563eb;cursor:pointer;">
+                 Create Account
+               </button>`
+        }
+      </p>
+
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  document
+    .querySelector("#close-auth")
+    .addEventListener("click", () => modal.remove());
+
+  document
+    .querySelector("#switch-auth")
+    .addEventListener("click", () => {
+      modal.remove();
+      openAuthModal(isSignup ? "login" : "signup");
+    });
+
+  document
+    .querySelector("#auth-submit")
+    .addEventListener("click", () => handleAuth(mode));
+
+  document
+    .querySelector("#auth-password")
+    .addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        handleAuth(mode);
+      }
+    });
+}
+
+/* =========================================================
+   LOGIN / SIGNUP
+========================================================= */
+
+async function handleAuth(mode) {
+  const email = document
+    .querySelector("#auth-email")
+    .value
+    .trim();
+
+  const password = document
+    .querySelector("#auth-password")
+    .value;
+
+  const errorElement = document.querySelector("#auth-error");
+
+  if (!email || !password) {
+    errorElement.textContent = "Email and password are required.";
+    return;
+  }
+
+  if (password.length < 6) {
+    errorElement.textContent =
+      "Password must contain at least 6 characters.";
+    return;
+  }
+
   try {
-    const savedExpenses = localStorage.getItem(STORAGE_KEY);
+    const button = document.querySelector("#auth-submit");
 
-    if (!savedExpenses) {
-      return [...DEMO_EXPENSES];
+    button.disabled = true;
+    button.textContent = "Please wait...";
+
+    if (mode === "signup") {
+      const name = document
+        .querySelector("#auth-name")
+        .value
+        .trim();
+
+      if (!name) {
+        throw new Error("Please enter your name.");
+      }
+
+      await signup(email, password, {
+        full_name: name,
+      });
+
+      errorElement.style.color = "#16a34a";
+      errorElement.textContent =
+        "Account created. Check your email and confirm your account.";
+
+      button.textContent = "Check Your Email";
+    } else {
+      await login(email, password);
+
+      document
+        .querySelector("#auth-modal")
+        ?.remove();
     }
-
-    const parsedExpenses = JSON.parse(savedExpenses);
-
-    if (!Array.isArray(parsedExpenses)) {
-      return [...DEMO_EXPENSES];
-    }
-
-    return parsedExpenses.filter(
-      (expense) =>
-        expense &&
-        typeof expense.title === "string" &&
-        Number.isFinite(Number(expense.amount)) &&
-        CATEGORIES.includes(expense.category) &&
-        typeof expense.date === "string"
-    );
   } catch (error) {
-    console.error("Error loading expenses:", error);
+    console.error(error);
 
-    return [...DEMO_EXPENSES];
+    errorElement.style.color = "#dc2626";
+
+    errorElement.textContent =
+      error?.message || "Authentication failed.";
+
+    const button = document.querySelector("#auth-submit");
+
+    if (button) {
+      button.disabled = false;
+      button.textContent =
+        mode === "signup"
+          ? "Create Account"
+          : "Login";
+    }
   }
 }
 
+async function handleLogout() {
+  try {
+    await logout();
 
-// --------------------------------------------------
-// Save expenses to localStorage
-// --------------------------------------------------
+    expenses = [];
 
-function saveExpenses() {
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(expenses)
-  );
+    renderApp();
+
+    showToast("Logged out successfully.");
+  } catch (error) {
+    console.error(error);
+    showToast("Logout failed.");
+  }
 }
 
+/* =========================================================
+   AUTH STATE
+========================================================= */
 
-// --------------------------------------------------
-// Generate unique ID
-// --------------------------------------------------
+async function updateAuthUI(user) {
+  currentUser = user;
 
-function makeId() {
-  return `${Date.now()}-${Math.random()
-    .toString(16)
-    .slice(2)}`;
+  const main = document.querySelector("main");
+
+  const loginButton = document.querySelector("#login-btn");
+  const signupButton = document.querySelector("#signup-btn");
+  const logoutButton = document.querySelector("#logout-btn");
+  const userInfo = document.querySelector("#user-info");
+
+  if (!user) {
+    if (main) {
+      main.hidden = true;
+    }
+
+    loginButton.hidden = false;
+    signupButton.hidden = false;
+    logoutButton.hidden = true;
+
+    userInfo.textContent = "";
+
+    expenses = [];
+
+    return;
+  }
+
+  if (main) {
+    main.hidden = false;
+  }
+
+  loginButton.hidden = true;
+  signupButton.hidden = true;
+  logoutButton.hidden = false;
+
+  userInfo.textContent = `Logged in as ${user.email}`;
+
+  await loadUserExpenses();
+
+  renderApp();
 }
 
+/* =========================================================
+   SERVER DATA
+========================================================= */
 
-// --------------------------------------------------
-// Convert category name to CSS class
-// --------------------------------------------------
+async function loadUserExpenses() {
+  try {
+    const response = await fetch(
+      "/.netlify/functions/expenses",
+      {
+        method: "GET",
+        credentials: "same-origin",
+      },
+    );
 
-function getCategorySlug(category) {
-  return category
-    .toLowerCase()
-    .replace(/\s+/g, "-");
+    if (response.status === 401) {
+      throw new Error("You are not logged in.");
+    }
+
+    if (!response.ok) {
+      throw new Error("Could not load your expenses.");
+    }
+
+    const data = await response.json();
+
+    expenses = Array.isArray(data.expenses)
+      ? data.expenses
+      : [];
+  } catch (error) {
+    console.error(error);
+
+    expenses = [];
+
+    showToast("Could not load expenses.");
+  }
 }
 
+async function saveExpenses() {
+  if (!currentUser) {
+    showToast("Please login first.");
+    return false;
+  }
 
-// --------------------------------------------------
-// Calculate category totals
-// --------------------------------------------------
+  try {
+    const response = await fetch(
+      "/.netlify/functions/expenses",
+      {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          expenses,
+        }),
+      },
+    );
+
+    if (response.status === 401) {
+      throw new Error("Your session has expired.");
+    }
+
+    if (!response.ok) {
+      throw new Error("Could not save expenses.");
+    }
+
+    return true;
+  } catch (error) {
+    console.error(error);
+
+    showToast(error.message || "Could not save expenses.");
+
+    return false;
+  }
+}
+
+/* =========================================================
+   EXPENSE CALCULATIONS
+========================================================= */
 
 function getCategoryTotals() {
   const totals = Object.fromEntries(
-    CATEGORIES.map((category) => [category, 0])
+    CATEGORIES.map((category) => [category, 0]),
   );
 
   expenses.forEach((expense) => {
-    totals[expense.category] += Number(expense.amount);
+    if (totals[expense.category] !== undefined) {
+      totals[expense.category] += Number(expense.amount);
+    }
   });
 
   return totals;
 }
-
-
-// --------------------------------------------------
-// Get expenses after search/filter/sort
-// --------------------------------------------------
 
 function getVisibleExpenses() {
   const searchTerm =
@@ -249,9 +649,8 @@ function getVisibleExpenses() {
     elements.sortExpenses.value;
 
   const visibleExpenses = expenses.filter((expense) => {
-    const titleMatches = expense.title
-      .toLowerCase()
-      .includes(searchTerm);
+    const titleMatches =
+      expense.title.toLowerCase().includes(searchTerm);
 
     const categoryMatches =
       selectedCategory === "all" ||
@@ -266,34 +665,26 @@ function getVisibleExpenses() {
     }
 
     if (selectedSort === "highest") {
-      return (
-        Number(second.amount) -
-        Number(first.amount)
-      );
+      return Number(second.amount) - Number(first.amount);
     }
 
     if (selectedSort === "lowest") {
-      return (
-        Number(first.amount) -
-        Number(second.amount)
-      );
+      return Number(first.amount) - Number(second.amount);
     }
 
-    // Newest first
     return second.date.localeCompare(first.date);
   });
 }
 
-
-// --------------------------------------------------
-// Update summary cards
-// --------------------------------------------------
+/* =========================================================
+   SUMMARY
+========================================================= */
 
 function updateSummary() {
   const total = expenses.reduce(
     (sum, expense) =>
       sum + Number(expense.amount),
-    0
+    0,
   );
 
   const highest = expenses.reduce(
@@ -302,7 +693,7 @@ function updateSummary() {
       Number(currentHighest.amount || 0)
         ? expense
         : currentHighest,
-    {}
+    {},
   );
 
   elements.totalExpenses.textContent =
@@ -318,41 +709,28 @@ function updateSummary() {
     highest.title || "No expense yet";
 }
 
-
-// --------------------------------------------------
-// Render category spending
-// --------------------------------------------------
+/* =========================================================
+   CATEGORY DISPLAY
+========================================================= */
 
 function renderCategoryTotals() {
   const totals = getCategoryTotals();
 
-  const highestCategoryTotal = Math.max(
-    ...Object.values(totals),
-    1
-  );
+  const highestCategoryTotal =
+    Math.max(...Object.values(totals), 1);
 
   elements.categoryList.replaceChildren();
 
   CATEGORIES.forEach((category) => {
     const item = document.createElement("div");
-
     item.className = "category-item";
 
-
-    // Heading
     const heading = document.createElement("div");
+    heading.className = "category-item-heading";
 
-    heading.className =
-      "category-item-heading";
-
-
-    // Category label
     const label = document.createElement("div");
-
     label.className = "category-label";
 
-
-    // Category dot
     const dot = document.createElement("span");
 
     dot.className =
@@ -360,19 +738,12 @@ function renderCategoryTotals() {
 
     dot.setAttribute("aria-hidden", "true");
 
-
-    // Category name
-    const labelText =
-      document.createElement("span");
-
+    const labelText = document.createElement("span");
     labelText.textContent = category;
 
     label.append(dot, labelText);
 
-
-    // Amount
-    const amount =
-      document.createElement("span");
+    const amount = document.createElement("span");
 
     amount.className = "category-amount";
 
@@ -381,42 +752,30 @@ function renderCategoryTotals() {
 
     heading.append(label, amount);
 
-
-    // Progress bar
-    const bar =
-      document.createElement("div");
+    const bar = document.createElement("div");
 
     bar.className = "category-bar";
 
-    bar.setAttribute(
-      "role",
-      "progressbar"
-    );
+    bar.setAttribute("role", "progressbar");
 
     bar.setAttribute(
       "aria-label",
-      `${category} spending`
+      `${category} spending`,
     );
 
-    bar.setAttribute(
-      "aria-valuemin",
-      "0"
-    );
+    bar.setAttribute("aria-valuemin", "0");
 
     bar.setAttribute(
       "aria-valuemax",
-      String(highestCategoryTotal)
+      String(highestCategoryTotal),
     );
 
     bar.setAttribute(
       "aria-valuenow",
-      String(totals[category])
+      String(totals[category]),
     );
 
-
-    // Progress fill
-    const fill =
-      document.createElement("div");
+    const fill = document.createElement("div");
 
     fill.className =
       `category-bar-fill category-bar-fill-${getCategorySlug(category)}`;
@@ -426,17 +785,15 @@ function renderCategoryTotals() {
 
     bar.append(fill);
 
-
     item.append(heading, bar);
 
     elements.categoryList.append(item);
   });
 }
 
-
-// --------------------------------------------------
-// Render expense table
-// --------------------------------------------------
+/* =========================================================
+   EXPENSE TABLE
+========================================================= */
 
 function renderExpenses() {
   const visibleExpenses =
@@ -446,18 +803,11 @@ function renderExpenses() {
     elements.searchInput.value.trim() !== "" ||
     elements.filterCategory.value !== "all";
 
-
-  // Clear old rows
   elements.tableBody.replaceChildren();
 
-
-  // Create rows
   visibleExpenses.forEach((expense) => {
-    const row =
-      document.createElement("tr");
+    const row = document.createElement("tr");
 
-
-    // Title
     const titleCell =
       document.createElement("td");
 
@@ -467,8 +817,6 @@ function renderExpenses() {
     titleCell.textContent =
       expense.title;
 
-
-    // Category
     const categoryCell =
       document.createElement("td");
 
@@ -476,17 +824,13 @@ function renderExpenses() {
       document.createElement("span");
 
     categoryBadge.className =
-      `category-badge category-badge-${getCategorySlug(
-        expense.category
-      )}`;
+      `category-badge category-badge-${getCategorySlug(expense.category)}`;
 
     categoryBadge.textContent =
       expense.category;
 
     categoryCell.append(categoryBadge);
 
-
-    // Amount
     const amountCell =
       document.createElement("td");
 
@@ -496,8 +840,6 @@ function renderExpenses() {
     amountCell.textContent =
       formatIndianRupees(expense.amount);
 
-
-    // Date
     const dateCell =
       document.createElement("td");
 
@@ -507,8 +849,6 @@ function renderExpenses() {
     dateCell.textContent =
       formatDate(expense.date);
 
-
-    // Delete button
     const actionCell =
       document.createElement("td");
 
@@ -525,7 +865,7 @@ function renderExpenses() {
 
     deleteButton.setAttribute(
       "aria-label",
-      `Delete ${expense.title}`
+      `Delete ${expense.title}`,
     );
 
     deleteButton.innerHTML = `
@@ -536,21 +876,17 @@ function renderExpenses() {
 
     actionCell.append(deleteButton);
 
-
-    // Add all cells
     row.append(
       titleCell,
       categoryCell,
       amountCell,
       dateCell,
-      actionCell
+      actionCell,
     );
 
     elements.tableBody.append(row);
   });
 
-
-  // Result count
   const visibleCount =
     visibleExpenses.length;
 
@@ -561,8 +897,6 @@ function renderExpenses() {
         : "expenses"
     }`;
 
-
-  // Empty state
   const showEmptyState =
     visibleCount === 0;
 
@@ -585,10 +919,9 @@ function renderExpenses() {
   }
 }
 
-
-// --------------------------------------------------
-// Render complete application
-// --------------------------------------------------
+/* =========================================================
+   RENDER
+========================================================= */
 
 function renderApp() {
   updateSummary();
@@ -596,10 +929,9 @@ function renderApp() {
   renderExpenses();
 }
 
-
-// --------------------------------------------------
-// Clear form validation
-// --------------------------------------------------
+/* =========================================================
+   FORM VALIDATION
+========================================================= */
 
 function clearValidation() {
   const fields = [
@@ -611,58 +943,43 @@ function clearValidation() {
 
   fields.forEach(
     ([inputName, errorName]) => {
-      elements[inputName]
-        .classList
-        .remove("input-error");
+      elements[inputName].classList.remove(
+        "input-error",
+      );
 
-      elements[errorName]
-        .textContent = "";
-    }
+      elements[errorName].textContent = "";
+    },
   );
 }
-
-
-// --------------------------------------------------
-// Show validation error
-// --------------------------------------------------
 
 function setFieldError(
   inputElement,
   errorElement,
-  message
+  message,
 ) {
   inputElement.classList.add(
-    "input-error"
+    "input-error",
   );
 
   errorElement.textContent =
     message;
 }
 
-
-// --------------------------------------------------
-// Validate expense form
-// --------------------------------------------------
-
 function validateForm() {
   clearValidation();
 
   let isValid = true;
 
-
-  // Title
   if (!elements.titleInput.value.trim()) {
     setFieldError(
       elements.titleInput,
       elements.titleError,
-      "Please enter an expense title."
+      "Please enter an expense title.",
     );
 
     isValid = false;
   }
 
-
-  // Amount
   const amount =
     Number(elements.amountInput.value);
 
@@ -674,31 +991,27 @@ function validateForm() {
     setFieldError(
       elements.amountInput,
       elements.amountError,
-      "Amount must be greater than ₹0."
+      "Amount must be greater than ₹0.",
     );
 
     isValid = false;
   }
 
-
-  // Category
   if (!elements.categoryInput.value) {
     setFieldError(
       elements.categoryInput,
       elements.categoryError,
-      "Please select a category."
+      "Please select a category.",
     );
 
     isValid = false;
   }
 
-
-  // Date
   if (!elements.dateInput.value) {
     setFieldError(
       elements.dateInput,
       elements.dateError,
-      "Please choose a date."
+      "Please choose a date.",
     );
 
     isValid = false;
@@ -707,43 +1020,45 @@ function validateForm() {
   return isValid;
 }
 
-
-// --------------------------------------------------
-// Show toast message
-// --------------------------------------------------
+/* =========================================================
+   TOAST
+========================================================= */
 
 function showToast(message) {
   elements.toast.textContent =
     message;
 
   elements.toast.classList.add(
-    "is-visible"
+    "is-visible",
   );
 
   window.clearTimeout(
-    toastTimeout
+    toastTimeout,
   );
 
   toastTimeout =
     window.setTimeout(() => {
       elements.toast.classList.remove(
-        "is-visible"
+        "is-visible",
       );
     }, 2600);
 }
 
+/* =========================================================
+   ADD EXPENSE
+========================================================= */
 
-// --------------------------------------------------
-// Add expense
-// --------------------------------------------------
-
-function handleFormSubmit(event) {
+async function handleFormSubmit(event) {
   event.preventDefault();
+
+  if (!currentUser) {
+    showToast("Please login first.");
+    return;
+  }
 
   if (!validateForm()) {
     return;
   }
-
 
   const newExpense = {
     id: makeId(),
@@ -761,16 +1076,20 @@ function handleFormSubmit(event) {
       elements.dateInput.value,
   };
 
-
-  // Add expense
   expenses.push(newExpense);
 
+  const saved =
+    await saveExpenses();
 
-  // Save
-  saveExpenses();
+  if (!saved) {
+    expenses = expenses.filter(
+      (expense) =>
+        expense.id !== newExpense.id,
+    );
 
+    return;
+  }
 
-  // Reset form
   elements.form.reset();
 
   elements.dateInput.value =
@@ -778,83 +1097,76 @@ function handleFormSubmit(event) {
 
   clearValidation();
 
-
-  // Update UI
   renderApp();
 
-
-  // Message
   showToast(
-    "Expense added successfully."
+    "Expense added successfully.",
   );
 }
 
+/* =========================================================
+   DELETE EXPENSE
+========================================================= */
 
-// --------------------------------------------------
-// Delete expense
-// --------------------------------------------------
-
-function handleDelete(event) {
+async function handleDelete(event) {
   const deleteButton =
     event.target.closest(
-      ".delete-button"
+      ".delete-button",
     );
 
   if (!deleteButton) {
     return;
   }
 
-
   const expense =
     expenses.find(
       (item) =>
         item.id ===
-        deleteButton.dataset.id
+        deleteButton.dataset.id,
     );
 
   if (!expense) {
     return;
   }
 
-
   const shouldDelete =
     window.confirm(
-      `Delete "${expense.title}" (${formatIndianRupees(
-        expense.amount
-      )})?`
+      `Delete "${expense.title}" (${formatIndianRupees(expense.amount)})?`,
     );
 
   if (!shouldDelete) {
     return;
   }
 
+  const oldExpenses =
+    [...expenses];
 
-  // Remove expense
   expenses =
     expenses.filter(
       (item) =>
-        item.id !== expense.id
+        item.id !== expense.id,
     );
 
+  const saved =
+    await saveExpenses();
 
-  // Save updated data
-  saveExpenses();
+  if (!saved) {
+    expenses =
+      oldExpenses;
 
+    return;
+  }
 
-  // Update UI
   renderApp();
 
-
-  // Message
   showToast(
-    "Expense deleted."
+    "Expense deleted.",
   );
 }
 
-
-// --------------------------------------------------
-// Clear search and filters
-// --------------------------------------------------
+/* =========================================================
+   FILTERS
+========================================================= */
 
 function clearFilters() {
   elements.searchInput.value = "";
@@ -865,70 +1177,89 @@ function clearFilters() {
   renderExpenses();
 }
 
+/* =========================================================
+   INITIALISE
+========================================================= */
 
-// --------------------------------------------------
-// Start application
-// --------------------------------------------------
+async function initialiseApp() {
+  createAuthUI();
 
-function initialiseApp() {
   elements.todayDate.textContent =
-    formatDate(
-      getTodayString()
-    );
+    formatDate(getTodayString());
 
   elements.dateInput.value =
     getTodayString();
 
-
-  // Form submit
   elements.form.addEventListener(
     "submit",
-    handleFormSubmit
+    handleFormSubmit,
   );
 
-
-  // Delete
   elements.tableBody.addEventListener(
     "click",
-    handleDelete
+    handleDelete,
   );
 
-
-  // Search
   elements.searchInput.addEventListener(
     "input",
-    renderExpenses
+    renderExpenses,
   );
 
-
-  // Category filter
   elements.filterCategory.addEventListener(
     "change",
-    renderExpenses
+    renderExpenses,
   );
 
-
-  // Sorting
   elements.sortExpenses.addEventListener(
     "change",
-    renderExpenses
+    renderExpenses,
   );
 
-
-  // Clear filters
   elements.clearFilters.addEventListener(
     "click",
-    clearFilters
+    clearFilters,
   );
 
+  /*
+   * Process email confirmation,
+   * OAuth and password recovery links.
+   */
+  try {
+    await handleAuthCallback();
+  } catch (error) {
+    console.error(
+      "Auth callback error:",
+      error,
+    );
+  }
 
-  // Initial render
+  /*
+   * Check existing login session.
+   */
+  try {
+    const user =
+      await getUser();
+
+    await updateAuthUI(user);
+  } catch (error) {
+    console.error(
+      "Could not get user:",
+      error,
+    );
+
+    await updateAuthUI(null);
+  }
+
+  /*
+   * Watch login/logout changes.
+   */
+  onAuthChange(
+    async (_event, user) => {
+      await updateAuthUI(user);
+    },
+  );
+
   renderApp();
 }
-
-
-// --------------------------------------------------
-// Run app
-// --------------------------------------------------
 
 initialiseApp();
